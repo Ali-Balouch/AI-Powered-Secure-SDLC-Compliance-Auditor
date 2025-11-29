@@ -15,8 +15,7 @@ function MainApp() {
   const [language, setLanguage] = useState("python");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [threatModel, setThreatModel] = useState(null);
-  const [loadingThreat, setLoadingThreat] = useState(false);
+  const [showThreatModal, setShowThreatModal] = useState(false);
   const [activeTab, setActiveTab] = useState("security");
   const navigate = useNavigate();
 
@@ -42,19 +41,19 @@ function MainApp() {
     setLoading(false);
   };
 
-  const generateThreatModel = async () => {
-    setLoadingThreat(true);
-    try {
-      const res = await axios.post("http://localhost:5000/threat-model", {
+  const handleThreatModelClick = () => {
+    setShowThreatModal(true);
+  };
+
+  const selectThreatFramework = (framework) => {
+    setShowThreatModal(false);
+    navigate("/threat-model", {
+      state: {
         code,
-        language
-      });
-      setThreatModel(res.data.threat_model);
-      setActiveTab("threat");
-    } catch (err) {
-      setThreatModel(`Error: ${err.message}`);
-    }
-    setLoadingThreat(false);
+        language,
+        framework
+      }
+    });
   };
 
   const getSecurityFindings = () => {
@@ -99,6 +98,35 @@ function MainApp() {
           message: item.message || "Code quality issue",
           ruleId: item.ruleId || "N/A"
         });
+      });
+    }
+
+    // C++ Cppcheck results
+    if (result.cppcheck?.issues && result.cppcheck.issues.length > 0) {
+      result.cppcheck.issues.forEach((item) => {
+        findings.push({
+          tool: "Cppcheck",
+          severity: item.severity?.toUpperCase() || "WARNING",
+          line: item.line || "N/A",
+          message: item.message || "Code issue detected",
+          file: item.file
+        });
+      });
+    }
+
+    // C++ Flawfinder results
+    if (result.cppcheck?.flawfinder && result.cppcheck.flawfinder.length > 0) {
+      result.cppcheck.flawfinder.forEach((item) => {
+        const match = item.match(/^(.+?):(\d+):\s*\[(\d+)\]\s*(.+)/);
+        if (match) {
+          findings.push({
+            tool: "Flawfinder",
+            severity: parseInt(match[3]) >= 4 ? "HIGH" : parseInt(match[3]) >= 2 ? "MEDIUM" : "LOW",
+            line: match[2],
+            message: match[4],
+            riskLevel: match[3]
+          });
+        }
       });
     }
 
@@ -175,7 +203,7 @@ function MainApp() {
       }}>
         <div>
           <h1 style={{ margin: "0 0 5px 0" }}>AI SDLC Security Compliance Auditor</h1>
-          <p style={{ margin: "0", opacity: 0.8 }}>Professional Security Analysis for Python & JavaScript</p>
+          <p style={{ margin: "0", opacity: 0.8 }}>Python - JavaScript - C++ - Java </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
           <div style={{ textAlign: "right" }}>
@@ -249,20 +277,22 @@ function MainApp() {
               </button>
 
               <button
-                onClick={generateThreatModel}
-                disabled={loadingThreat || !code.trim()}
+                onClick={handleThreatModelClick}
+                disabled={!code.trim()}
                 style={{
                   padding: "10px 20px",
-                  cursor: loadingThreat || !code.trim() ? "not-allowed" : "pointer",
-                  backgroundColor: loadingThreat || !code.trim() ? "#95a5a6" : "#9b59b6",
+                  cursor: !code.trim() ? "not-allowed" : "pointer",
+                  backgroundColor: !code.trim() ? "#95a5a6" : "#9b59b6",
                   color: "white",
                   border: "none",
                   borderRadius: "5px",
                   fontSize: "14px",
                   fontWeight: "bold"
                 }}
+                onMouseOver={(e) => code.trim() && (e.currentTarget.style.backgroundColor = "#8e44ad")}
+                onMouseOut={(e) => code.trim() && (e.currentTarget.style.backgroundColor = "#9b59b6")}
               >
-                {loadingThreat ? "🎯 Modeling..." : "🎯 Threat Model"}
+                🎯 Threat Model
               </button>
             </div>
           </div>
@@ -287,8 +317,118 @@ function MainApp() {
           </div>
         </div>
 
+        {/* Threat Model Selection Modal */}
+        {showThreatModal && (
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000
+          }}>
+            <div style={{
+              backgroundColor: "white",
+              borderRadius: "15px",
+              padding: "40px",
+              maxWidth: "600px",
+              width: "90%",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)"
+            }}>
+              <h2 style={{ color: "#2c3e50", marginTop: 0, marginBottom: "10px" }}>🎯 Select Threat Modeling Framework</h2>
+              <p style={{ color: "#7f8c8d", marginBottom: "30px" }}>Choose a framework to analyze your code for security threats</p>
+              
+              <div style={{ display: "grid", gap: "15px" }}>
+                <button
+                  onClick={() => selectThreatFramework("STRIDE")}
+                  style={{
+                    padding: "20px",
+                    backgroundColor: "#9b59b6",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    fontWeight: "bold",
+                    textAlign: "left",
+                    transition: "all 0.3s"
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#8e44ad"}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#9b59b6"}
+                >
+                  <div style={{ fontSize: "20px", marginBottom: "5px" }}>🛡️ STRIDE (Default)</div>
+                  <div style={{ fontSize: "13px", opacity: 0.9 }}>Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege</div>
+                </button>
+
+                <button
+                  onClick={() => selectThreatFramework("PASTA")}
+                  style={{
+                    padding: "20px",
+                    backgroundColor: "#3498db",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    fontWeight: "bold",
+                    textAlign: "left",
+                    transition: "all 0.3s"
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#2980b9"}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#3498db"}
+                >
+                  <div style={{ fontSize: "20px", marginBottom: "5px" }}>🍝 PASTA</div>
+                  <div style={{ fontSize: "13px", opacity: 0.9 }}>Process for Attack Simulation and Threat Analysis - Risk-centric approach</div>
+                </button>
+
+                <button
+                  onClick={() => selectThreatFramework("DREAD")}
+                  style={{
+                    padding: "20px",
+                    backgroundColor: "#e74c3c",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    fontWeight: "bold",
+                    textAlign: "left",
+                    transition: "all 0.3s"
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#c0392b"}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#e74c3c"}
+                >
+                  <div style={{ fontSize: "20px", marginBottom: "5px" }}>⚠️ DREAD</div>
+                  <div style={{ fontSize: "13px", opacity: 0.9 }}>Damage, Reproducibility, Exploitability, Affected Users, Discoverability</div>
+                </button>
+              </div>
+
+              <button
+                onClick={() => setShowThreatModal(false)}
+                style={{
+                  marginTop: "20px",
+                  padding: "10px 20px",
+                  backgroundColor: "#95a5a6",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  width: "100%"
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Tab Navigation */}
-        {(result || threatModel) && (
+        {result && (
           <div style={{
             backgroundColor: "white",
             borderRadius: "8px 8px 0 0",
@@ -315,23 +455,6 @@ function MainApp() {
             >
               🛡️ Security Analysis
             </button>
-            <button
-              onClick={() => setActiveTab("threat")}
-              style={{
-                flex: 1,
-                padding: "15px",
-                border: "none",
-                borderBottom: activeTab === "threat" ? "3px solid #9b59b6" : "none",
-                backgroundColor: activeTab === "threat" ? "white" : "#ecf0f1",
-                fontWeight: "bold",
-                cursor: "pointer",
-                fontSize: "16px",
-                color: activeTab === "threat" ? "#2c3e50" : "#7f8c8d",
-                borderRadius: "0 8px 0 0"
-              }}
-            >
-              🎯 STRIDE Threat Model
-            </button>
           </div>
         )}
 
@@ -347,9 +470,37 @@ function MainApp() {
               overflowY: "auto",
               maxHeight: "600px"
             }}>
-              <h2 style={{ color: "#2c3e50", marginTop: "0", borderBottom: "2px solid #e74c3c", paddingBottom: "10px" }}>
-                🛡️ Security Findings ({findings.length})
-              </h2>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid #e74c3c", paddingBottom: "10px", marginBottom: "15px" }}>
+                <h2 style={{ color: "#2c3e50", margin: "0" }}>
+                  🛡️ Security Findings ({findings.length})
+                </h2>
+                {findings.length > 0 && (
+                  <button
+                    onClick={() => navigate("/fix", { 
+                      state: { 
+                        originalCode: code, 
+                        language: language,
+                        vulnerabilities: findings 
+                      } 
+                    })}
+                    style={{
+                      padding: "10px 20px",
+                      backgroundColor: "#27ae60",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      fontWeight: "bold",
+                      fontSize: "14px",
+                      transition: "all 0.3s"
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#229954"}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#27ae60"}
+                  >
+                    🔧 Fix
+                  </button>
+                )}
+              </div>
 
               {findings.length === 0 ? (
                 <div style={{
@@ -451,36 +602,7 @@ function MainApp() {
           </div>
         )}
 
-        {threatModel && activeTab === "threat" && (
-          <div style={{
-            backgroundColor: "white",
-            borderRadius: "0 0 8px 8px",
-            padding: "30px",
-            boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
-            marginTop: "0"
-          }}>
-            <h2 style={{ color: "#2c3e50", marginTop: "0", borderBottom: "2px solid #9b59b6", paddingBottom: "10px" }}>
-              🎯 STRIDE Threat Model Analysis
-            </h2>
-
-            <div style={{
-              backgroundColor: "#f8f4ff",
-              border: "2px solid #9b59b6",
-              borderRadius: "6px",
-              padding: "20px",
-              fontSize: "14px",
-              lineHeight: "1.8",
-              color: "#2c3e50",
-              whiteSpace: "pre-wrap",
-              wordWrap: "break-word",
-              fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
-            }}>
-              {threatModel}
-            </div>
-          </div>
-        )}
-
-        {!result && !loading && !threatModel && !loadingThreat && (
+        {!result && !loading && (
           <div style={{
             backgroundColor: "white",
             borderRadius: "8px",
@@ -489,7 +611,7 @@ function MainApp() {
             boxShadow: "0 2px 10px rgba(0,0,0,0.1)"
           }}>
             <h3 style={{ color: "#7f8c8d", marginTop: "0" }}>👆 Paste your code and click "Analyze Code" to start</h3>
-            <p style={{ color: "#95a5a6" }}>Supports Python and JavaScript code analysis</p>
+            <p style={{ color: "#95a5a6" }}>Supports Python, JavaScript, C++, and Java code analysis</p>
           </div>
         )}
       </div>
