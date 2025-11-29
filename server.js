@@ -183,14 +183,51 @@ app.post("/analyze", async (req, res) => {
                 finalize();
             });
         } else if (language === "cpp") {
-            // C++ → Cppcheck (if installed)
-            exec(`cppcheck --enable=all --json ${filename} 2>&1`, async (cErr, cOut) => {
+            // C++ → Enhanced security analysis with Cppcheck and Flawfinder
+            exec(`cppcheck --enable=warning,style,performance,portability,information --template=gcc --inline-suppr ${filename} 2>&1`, async (cErr, cOut) => {
                 try {
-                    cppcheckResult = cOut ? { output: cOut } : { note: "Cppcheck not installed or no issues found" };
+                    // Parse Cppcheck output
+                    const cppcheckIssues = [];
+                    if (cOut) {
+                        const lines = cOut.split('\n');
+                        lines.forEach(line => {
+                            if (line.includes('error:') || line.includes('warning:') || line.includes('style:')) {
+                                const match = line.match(/\[(.+?):(\d+)\]:\s*\((.+?)\)\s*(.+)/);
+                                if (match) {
+                                    cppcheckIssues.push({
+                                        file: match[1],
+                                        line: match[2],
+                                        severity: match[3],
+                                        message: match[4]
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    cppcheckResult = { issues: cppcheckIssues, raw_output: cOut };
                 } catch (e) {
-                    cppcheckResult = { note: "Cppcheck analysis completed" };
+                    cppcheckResult = { note: "Cppcheck analysis completed", raw_output: cOut };
                 }
-                finalize();
+                
+                // Also try Flawfinder for security-specific issues
+                exec(`flawfinder --minlevel=0 --context --quiet ${filename}`, (fErr, fOut) => {
+                    try {
+                        const flawfinderIssues = [];
+                        if (fOut) {
+                            const lines = fOut.split('\n');
+                            lines.forEach(line => {
+                                if (line.match(/^\S+:\d+:/)) {
+                                    flawfinderIssues.push(line);
+                                }
+                            });
+                        }
+                        cppcheckResult.flawfinder = flawfinderIssues;
+                        cppcheckResult.flawfinder_output = fOut;
+                    } catch (e) {
+                        cppcheckResult.flawfinder = [];
+                    }
+                    finalize();
+                });
             });
         } else if (language === "java") {
             // Java → Just use Semgrep for now (SpotBugs requires compiled .class files)
@@ -217,15 +254,16 @@ app.post("/analyze", async (req, res) => {
     }
 });
 
-// 🎯 POST /threat-model - STRIDE Threat Modeling
+// 🎯 POST /threat-model - Multi-Framework Threat Modeling
 app.post("/threat-model", async (req, res) => {
-    const { code, language } = req.body;
+    const { code, language, framework = "STRIDE" } = req.body;
     
     try {
-        const threatModel = await generateThreatModel(code, language);
+        const threatModel = await generateThreatModel(code, language, framework);
         res.json({
             ok: true,
-            threat_model: threatModel
+            threat_model: threatModel,
+            framework: framework
         });
     } catch (err) {
         res.json({
@@ -284,8 +322,8 @@ async function callCopilotAI(code, language) {
     }
 }
 
-// 🎯 STRIDE Threat Modeling with AI
-async function generateThreatModel(code, language) {
+// 🎯 Multi-Framework Threat Modeling with AI
+async function generateThreatModel(code, language, framework = "STRIDE") {
     try {
         const API_KEY = process.env.GROQ_API_KEY;
 
@@ -293,16 +331,11 @@ async function generateThreatModel(code, language) {
             return "⚠️ Groq API key not configured. Add GROQ_API_KEY to .env file.";
         }
 
-        console.log("🎯 Generating STRIDE Threat Model...");
+        console.log(`🎯 Generating ${framework} Threat Model...`);
         
-        const response = await axios.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            {
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { 
-                        role: "system", 
-                        content: `You are an expert security architect specializing in STRIDE threat modeling. Analyze code and identify threats in these categories:
+        const frameworkPrompts = {
+            STRIDE: {
+                system: `You are an expert security architect specializing in STRIDE threat modeling. Analyze code and identify threats in these categories:
 
 **STRIDE Framework:**
 - **S**poofing: Authentication threats, identity impersonation
@@ -319,15 +352,71 @@ For each threat found:
 4. Risk level (Critical/High/Medium/Low)
 5. Mitigation strategy
 
-Be specific and actionable. Focus on real threats based on the code patterns.` 
+Be specific and actionable. Focus on real threats based on the code patterns.`,
+                user: `Perform STRIDE threat modeling on this ${language} code:\n\n${code}\n\nProvide a structured threat analysis with attack scenarios and mitigation recommendations.`
+            },
+            PASTA: {
+                system: `You are an expert security architect specializing in PASTA (Process for Attack Simulation and Threat Analysis) methodology. This is a risk-centric approach with seven stages.
+
+**PASTA Framework:**
+1. **Define Business Objectives** - Security requirements and compliance
+2. **Define Technical Scope** - Architecture, dependencies, data flows
+3. **Application Decomposition** - Components, trust boundaries, entry points
+4. **Threat Analysis** - Identify threat agents and attack vectors
+5. **Vulnerability Analysis** - Known weaknesses and exposures
+6. **Attack Modeling** - Simulate attack scenarios and paths
+7. **Risk & Impact Analysis** - Likelihood, impact, and prioritization
+
+For each stage, provide:
+- Analysis specific to the code
+- Risk assessment (1-10 scale)
+- Attack scenarios
+- Mitigation recommendations
+
+Focus on business impact and attack simulation.`,
+                user: `Perform PASTA threat modeling on this ${language} code:\n\n${code}\n\nProvide analysis across all 7 PASTA stages with risk assessment and attack simulation.`
+            },
+            DREAD: {
+                system: `You are an expert security architect specializing in DREAD risk assessment methodology. DREAD provides quantitative threat ranking.
+
+**DREAD Framework:**
+- **D**amage Potential (0-10): How much damage could the attack cause?
+- **R**eproducibility (0-10): How easy is it to reproduce the attack?
+- **E**xploitability (0-10): How much effort is needed to exploit?
+- **A**ffected Users (0-10): How many users would be impacted?
+- **D**iscoverability (0-10): How easy is it to discover the vulnerability?
+
+For each identified threat:
+1. Threat description
+2. DREAD scores for each category
+3. Total DREAD Score (sum/average)
+4. Risk Level (Critical: >40, High: 30-40, Medium: 20-30, Low: <20)
+5. Attack scenario
+6. Mitigation strategy
+
+Provide numerical scores and justify each rating.`,
+                user: `Perform DREAD risk assessment on this ${language} code:\n\n${code}\n\nProvide quantitative DREAD scoring for each identified threat with justification.`
+            }
+        };
+
+        const selectedPrompt = frameworkPrompts[framework] || frameworkPrompts.STRIDE;
+        
+        const response = await axios.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            {
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                    { 
+                        role: "system", 
+                        content: selectedPrompt.system
                     },
                     { 
                         role: "user", 
-                        content: `Perform STRIDE threat modeling on this ${language} code:\n\n${code}\n\nProvide a structured threat analysis with attack scenarios and mitigation recommendations.` 
+                        content: selectedPrompt.user
                     }
                 ],
                 temperature: 0.4,
-                max_tokens: 1500
+                max_tokens: 2000
             },
             { 
                 headers: { 
@@ -338,7 +427,7 @@ Be specific and actionable. Focus on real threats based on the code patterns.`
             }
         );
 
-        console.log("✅ STRIDE Threat Model generated");
+        console.log(`✅ ${framework} Threat Model generated`);
         return response.data.choices[0].message.content;
 
     } catch (err) {
@@ -347,6 +436,178 @@ Be specific and actionable. Focus on real threats based on the code patterns.`
         return `⚠️ Unable to generate threat model at this moment. (${errorMsg})`;
     }
 }
+
+// 🔧 POST /api/fix-code - Generate Fixed Code
+app.post("/api/fix-code", async (req, res) => {
+    const { code, language, vulnerabilities } = req.body;
+    
+    try {
+        const API_KEY = process.env.GROQ_API_KEY;
+
+        if (!API_KEY || API_KEY === 'your_groq_api_key_here') {
+            return res.json({
+                ok: false,
+                error: "Groq API key not configured"
+            });
+        }
+
+        console.log("🔧 Generating fixed code...");
+        
+        // Build vulnerability summary
+        const vulnSummary = vulnerabilities.map((v, idx) => 
+            `${idx + 1}. [${v.tool}] Line ${v.line}: ${v.message}`
+        ).join("\n");
+
+        const response = await axios.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            {
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                    { 
+                        role: "system", 
+                        content: `You are an expert security engineer. Your task is to fix security vulnerabilities in code while maintaining functionality. 
+
+Guidelines:
+1. Fix ALL identified security issues
+2. Add security best practices (input validation, error handling, etc.)
+3. Add comments explaining the security improvements
+4. Maintain the original functionality
+5. Use modern, secure coding patterns
+6. Return ONLY the fixed code, no explanations outside the code comments` 
+                    },
+                    { 
+                        role: "user", 
+                        content: `Fix the security vulnerabilities in this ${language} code:
+
+**Original Code:**
+\`\`\`${language}
+${code}
+\`\`\`
+
+**Vulnerabilities Found:**
+${vulnSummary}
+
+Please provide the complete, secure version of this code with all vulnerabilities fixed. Include inline comments explaining the security fixes.` 
+                    }
+                ],
+                temperature: 0.3,
+                max_tokens: 2000
+            },
+            { 
+                headers: { 
+                    "Authorization": `Bearer ${API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                timeout: 45000
+            }
+        );
+
+        console.log("✅ Fixed code generated");
+        
+        let fixedCode = response.data.choices[0].message.content;
+        
+        // Remove markdown code blocks if present
+        fixedCode = fixedCode.replace(/```[\w]*\n/g, '').replace(/```$/g, '').trim();
+        
+        res.json({
+            ok: true,
+            fixed_code: fixedCode
+        });
+
+    } catch (err) {
+        console.error("❌ Fix Code Error:", err.response?.status, err.response?.data || err.message);
+        const errorMsg = err.response?.data?.error?.message || err.message;
+        res.json({
+            ok: false,
+            error: `Unable to generate fixed code. ${errorMsg}`
+        });
+    }
+});
+
+// 📄 POST /api/generate-report - Generate AI Report for PDF
+app.post("/api/generate-report", async (req, res) => {
+    const { originalCode, fixedCode, language, vulnerabilities } = req.body;
+    
+    try {
+        const API_KEY = process.env.GROQ_API_KEY;
+
+        if (!API_KEY || API_KEY === 'your_groq_api_key_here') {
+            return res.json({
+                ok: false,
+                error: "Groq API key not configured"
+            });
+        }
+
+        console.log("📄 Generating security report...");
+        
+        // Build vulnerability summary
+        const vulnSummary = vulnerabilities?.map((v, idx) => 
+            `${idx + 1}. [${v.tool}] Line ${v.line} - ${v.severity}: ${v.message}`
+        ).join("\n") || "No vulnerabilities detected";
+
+        const response = await axios.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            {
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                    { 
+                        role: "system", 
+                        content: `You are a security report writer. Create a professional, detailed security analysis report.
+
+Structure the report with these sections:
+1. EXECUTIVE SUMMARY - Brief overview of findings
+2. VULNERABILITIES DETECTED - Detailed explanation of each issue
+3. SECURITY ANALYSIS - Technical analysis of the risks
+4. FIXES IMPLEMENTED - Explanation of how each vulnerability was fixed
+5. CODE IMPROVEMENTS - Security best practices applied
+6. RECOMMENDATIONS - Future security measures
+
+Use clear, professional language. Be specific about security risks and fixes.` 
+                    },
+                    { 
+                        role: "user", 
+                        content: `Generate a comprehensive security report for this ${language} code analysis:
+
+**VULNERABILITIES FOUND:**
+${vulnSummary}
+
+**ORIGINAL VULNERABLE CODE:**
+${originalCode}
+
+**FIXED SECURE CODE:**
+${fixedCode}
+
+Please provide a detailed security report explaining what was wrong, why it was dangerous, and how the fixes address each vulnerability.` 
+                    }
+                ],
+                temperature: 0.3,
+                max_tokens: 2500
+            },
+            { 
+                headers: { 
+                    "Authorization": `Bearer ${API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                timeout: 50000
+            }
+        );
+
+        console.log("✅ Security report generated");
+        
+        res.json({
+            ok: true,
+            report: response.data.choices[0].message.content
+        });
+
+    } catch (err) {
+        console.error("❌ Report Generation Error:", err.response?.status, err.response?.data || err.message);
+        const errorMsg = err.response?.data?.error?.message || err.message;
+        res.json({
+            ok: false,
+            error: `Unable to generate report. ${errorMsg}`
+        });
+    }
+});
 
 app.listen(5000, () => {
     console.log("🔥 Backend running on http://localhost:5000");
