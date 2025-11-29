@@ -2,6 +2,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import Login from "./components/Login";
 import Signup from "./components/Signup";
 import MainApp from "./components/MainApp";
+import Fix from "./components/Fix";
+import ThreatModel from "./components/ThreatModel";
 
 function AppRoutes() {
   // Check if user is authenticated
@@ -24,6 +26,22 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <MainApp />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/fix" 
+          element={
+            <ProtectedRoute>
+              <Fix />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/threat-model" 
+          element={
+            <ProtectedRoute>
+              <ThreatModel />
             </ProtectedRoute>
           } 
         />
